@@ -32,7 +32,12 @@ def run_simulation():
     )
     
     # Add objects to the advanced drone
-    sensor = Sensor(installation_angles=[np.deg2rad(90), 0, 0]) # Pointing right
+    sensor = Sensor(
+        installation_angles=[np.deg2rad(90), 0, 0], # Pointing right
+        resolution=(1920, 1080),
+        horizontal_fov_deg=90,
+        vertical_fov_deg=60
+    )
     rocket_launcher = RocketLauncher(installation_angles=[0, np.deg2rad(-5), 0]) # Pointing slightly down
     advanced_drone.add_object(sensor)
     advanced_drone.add_object(rocket_launcher)
@@ -88,6 +93,12 @@ def run_simulation():
         time.sleep(dt/4) # To make it watchable
 
     print("\nSimulation finished.")
+
+    # --- Demonstrate Sensor Ray Calculation ---
+    print("\n--- Sensor Corner Ray Vectors (in Sensor Frame) ---")
+    corner_rays = sensor.get_corner_ray_vectors()
+    for name, vector in corner_rays.items():
+        print(f"{name:>12s}: {np.round(vector, 3)}")
 
 if __name__ == "__main__":
     run_simulation() 
