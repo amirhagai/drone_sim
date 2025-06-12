@@ -1,0 +1,12 @@
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore generated media files
+*.gif
+
+# Ignore temporary frame directories
+temp_frames/
+temp_frames_adv/ 
