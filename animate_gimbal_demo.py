@@ -44,10 +44,52 @@ def animate_gimbaled_system():
     z_plane = 0.0
     target_pos = np.array([-2000., -2000., z_plane])
 
+    # --- Pre-computation for Axis Limits ---
+    print("Pre-computing flight path and footprints to determine axis bounds...")
+    all_points_for_bounds = []
+    
+    # Create temporary objects for the pre-run
+    temp_drone = AdvancedDrone(
+        position=np.copy(drone.position), velocity=np.copy(drone.velocity),
+        acceleration=np.copy(drone.acceleration), max_heading_change_rate=drone.max_heading_change_rate,
+        horsepower=drone.horsepower, max_static_thrust=drone.max_static_thrust,
+        max_circling_radius=drone.max_circling_radius, circling_radius_rate=drone.circling_radius_rate
+    )
+    temp_target_pos = np.copy(target_pos)
+    
+    time_steps = np.arange(0, simulation_duration, dt)
+    for t in time_steps:
+        # Simulate drone and target movement
+        waypoint_pre = np.array([2500, 2500, -2800]) if t < simulation_duration / 2.5 else None
+        temp_drone.step(dt, waypoint_pre)
+        temp_target_pos[0] += 100 * dt
+        temp_target_pos[1] += 50 * dt
+
+        # Add drone and target positions to bounds check
+        all_points_for_bounds.append(temp_drone.position)
+        all_points_for_bounds.append(temp_target_pos)
+
+        # Update gimbals and calculate footprints for bounds check
+        multi_sensor.step(temp_target_pos, temp_drone.position, temp_drone.attitude, dt)
+        for s in multi_sensor.sensors:
+            intersections = s.calculate_footprint(temp_drone.position, temp_drone.attitude, multi_sensor.installation_angles_rad, z_plane)
+            if intersections:
+                all_points_for_bounds.extend(list(intersections.values()))
+
+    # Calculate final bounds with padding
+    all_points_for_bounds = np.array(all_points_for_bounds)
+    min_coords = all_points_for_bounds.min(axis=0)
+    max_coords = all_points_for_bounds.max(axis=0)
+    x_range = max_coords[1] - min_coords[1]
+    y_range = max_coords[0] - min_coords[0]
+    padding = 0.1 # 10% padding
+    xlim = [min_coords[1] - padding * x_range, max_coords[1] + padding * x_range]
+    ylim = [min_coords[0] - padding * y_range, max_coords[0] + padding * y_range]
+    zlim = [0, -min_coords[2] + 200]
+
     # --- Simulation Loop ---
     filenames = []
-    time_steps = np.arange(0, simulation_duration, dt)
-    print("Generating frames...")
+    print("Generating frames with static bounds...")
     for i, t in enumerate(time_steps):
         # Drone follows a waypoint for the first part, then circles
         waypoint = np.array([2500, 2500, -2800]) if t < simulation_duration / 2.5 else None
@@ -68,6 +110,15 @@ def animate_gimbaled_system():
         ax.scatter(drone.position[1], drone.position[0], -drone.position[2], c='black', marker='o', s=100, label='Drone')
         ax.scatter(target_pos[1], target_pos[0], -target_pos[2], c='red', marker='x', s=100, label='Target')
 
+        # Plot Drone Attitude
+        C_body_to_ned = get_rotation_matrix(*drone.attitude)
+        axis_length = 300 # Length of the attitude vectors for visibility
+        body_x, body_y, body_z = np.array([axis_length, 0, 0]), np.array([0, axis_length, 0]), np.array([0, 0, axis_length])
+        world_x, world_y, world_z = C_body_to_ned @ body_x, C_body_to_ned @ body_y, C_body_to_ned @ body_z
+        ax.quiver(drone.position[1], drone.position[0], -drone.position[2], world_x[1], world_x[0], -world_x[2], color='red')
+        ax.quiver(drone.position[1], drone.position[0], -drone.position[2], world_y[1], world_y[0], -world_y[2], color='green')
+        ax.quiver(drone.position[1], drone.position[0], -drone.position[2], world_z[1], world_z[0], -world_z[2], color='blue')
+
         # Plot footprints for each sensor
         colors = ['cyan', 'magenta']
         for s_idx, sensor in enumerate(multi_sensor.sensors):
@@ -84,7 +135,7 @@ def animate_gimbaled_system():
         # Configure Axes and save
         ax.set_xlabel("East"); ax.set_ylabel("North"); ax.set_zlabel("Altitude")
         ax.set_title(f"Multi-Sensor Tracking (Time: {t:.1f}s)")
-        ax.set_xlim(-4000, 4000); ax.set_ylim(-4000, 4000); ax.set_zlim(0, 3500)
+        ax.set_xlim(xlim); ax.set_ylim(ylim); ax.set_zlim(zlim)
         ax.view_init(elev=60, azim=-45)
 
         filename = f"{temp_frame_dir}/frame_{i:03d}.png"
