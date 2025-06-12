@@ -42,7 +42,7 @@ class Sensor(BaseObject):
             "bottom_right": bottom_right_vec / np.linalg.norm(bottom_right_vec),
         } 
 
-    def calculate_footprint(self, drone_position_ned, drone_attitude_rad, z_plane=0.0):
+    def calculate_footprint(self, drone_position_ned, drone_attitude_rad, z_plane=0.0, platform_install_rad=None):
         """
         Calculates the sensor's footprint on a given Z-plane.
 
@@ -50,28 +50,33 @@ class Sensor(BaseObject):
             drone_position_ned (np.array): The drone's position [N, E, D].
             drone_attitude_rad (np.array): The drone's attitude [roll, pitch, yaw].
             z_plane (float): The Z-value of the intersection plane in the NED frame.
+            platform_install_rad (np.array, optional): The installation angles of the platform
+                                                      the sensor is mounted on, relative to the drone body.
+                                                      Defaults to None.
 
         Returns:
             A dictionary of the 3D intersection points for the corners that hit the plane.
         """
-        # Get rotation from sensor frame -> body frame
-        C_sensor_to_body = get_rotation_matrix(
-            roll=self.installation_angles[0],
-            pitch=self.installation_angles[1],
-            yaw=self.installation_angles[2]
-        )
+        # The full rotation is Sensor -> Platform -> Body -> NED.
+        # self.installation_angles are Sensor -> Platform.
+        # platform_install_rad are Platform -> Body.
+        # drone_attitude_rad are Body -> NED.
+        C_sensor_to_platform = get_rotation_matrix(*self.installation_angles)
+        
+        C_platform_to_body = np.identity(3)
+        if platform_install_rad is not None:
+            C_platform_to_body = get_rotation_matrix(*platform_install_rad)
+
         # Get rotation from body frame -> NED frame
-        C_body_to_ned = get_rotation_matrix(
-            roll=drone_attitude_rad[0],
-            pitch=drone_attitude_rad[1],
-            yaw=drone_attitude_rad[2]
-        )
+        C_body_to_ned = get_rotation_matrix(*drone_attitude_rad)
 
         corner_rays = self.get_corner_ray_vectors()
         intersections = {}
 
         for name, ray_sensor in corner_rays.items():
-            ray_ned = C_body_to_ned @ C_sensor_to_body @ ray_sensor
+            ray_platform = C_sensor_to_platform @ ray_sensor
+            ray_body = C_platform_to_body @ ray_platform
+            ray_ned = C_body_to_ned @ ray_body
             
             # Ensure the ray points towards the plane (V.z must have opposite sign to plane position)
             # For z_plane=0, we need V.z > 0. For z_plane=-200, we need V.z > 0.

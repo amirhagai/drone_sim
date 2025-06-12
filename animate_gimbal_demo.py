@@ -15,7 +15,7 @@ def animate_gimbaled_system():
     # --- Animation & Simulation Settings ---
     gif_filename = "gimbal_animation.gif"
     temp_frame_dir = "temp_frames_gimbal"
-    simulation_duration = 40
+    simulation_duration = 100
     dt = 0.5
 
     if os.path.exists(temp_frame_dir): shutil.rmtree(temp_frame_dir)
@@ -31,18 +31,20 @@ def animate_gimbaled_system():
     
     # Add two different gimbaled sensors to the platform
     sensor1 = GimbaledSensor(
-        installation_angles=[0,0,0], resolution=(640,480), hfov_deg=10, vfov_deg=10,
+        installation_angles=[0,0,0], resolution=(640,480), horizontal_fov_deg=10, vertical_fov_deg=10,
         max_gimbal_rate_dps=90, max_gimbal_yaw_deg=120, max_gimbal_pitch_deg=45
     )
     sensor2 = GimbaledSensor(
-        installation_angles=[0,0,0], resolution=(640,480), hfov_deg=25, vfov_deg=25,
+        installation_angles=[0,0,0], resolution=(640,480), horizontal_fov_deg=25, vertical_fov_deg=25,
         max_gimbal_rate_dps=45, max_gimbal_yaw_deg=90, max_gimbal_pitch_deg=30
     )
     multi_sensor.add_sensor(sensor1)
     multi_sensor.add_sensor(sensor2)
     
     z_plane = 0.0
-    target_pos = np.array([-2000., -2000., z_plane])
+    # Define two independent targets
+    target1_pos = np.array([-2000., -2000., z_plane])
+    target2_pos = np.array([2000., -2000., z_plane])
 
     # --- Pre-computation for Axis Limits ---
     print("Pre-computing flight path and footprints to determine axis bounds...")
@@ -55,24 +57,34 @@ def animate_gimbaled_system():
         horsepower=drone.horsepower, max_static_thrust=drone.max_static_thrust,
         max_circling_radius=drone.max_circling_radius, circling_radius_rate=drone.circling_radius_rate
     )
-    temp_target_pos = np.copy(target_pos)
+    temp_target1_pos = np.copy(target1_pos)
+    temp_target2_pos = np.copy(target2_pos)
     
     time_steps = np.arange(0, simulation_duration, dt)
     for t in time_steps:
         # Simulate drone and target movement
-        waypoint_pre = np.array([2500, 2500, -2800]) if t < simulation_duration / 2.5 else None
+        waypoint_pre = np.array([0, 0, -3000])
         temp_drone.step(dt, waypoint_pre)
-        temp_target_pos[0] += 100 * dt
-        temp_target_pos[1] += 50 * dt
+        temp_target1_pos[0] += 100 * dt
+        temp_target1_pos[1] += 50 * dt
+        temp_target2_pos[0] -= 50 * dt
+        temp_target2_pos[1] += 100 * dt
 
         # Add drone and target positions to bounds check
         all_points_for_bounds.append(temp_drone.position)
-        all_points_for_bounds.append(temp_target_pos)
+        all_points_for_bounds.append(temp_target1_pos)
+        all_points_for_bounds.append(temp_target2_pos)
 
         # Update gimbals and calculate footprints for bounds check
-        multi_sensor.step(temp_target_pos, temp_drone.position, temp_drone.attitude, dt)
+        temp_targets_dict = {0: temp_target1_pos, 1: temp_target2_pos}
+        multi_sensor.step(temp_targets_dict, temp_drone.position, temp_drone.attitude, dt)
         for s in multi_sensor.sensors:
-            intersections = s.calculate_footprint(temp_drone.position, temp_drone.attitude, multi_sensor.installation_angles_rad, z_plane)
+            intersections = s.calculate_footprint(
+                temp_drone.position,
+                temp_drone.attitude,
+                z_plane=z_plane,
+                platform_install_rad=multi_sensor.installation_angles_rad
+            )
             if intersections:
                 all_points_for_bounds.extend(list(intersections.values()))
 
@@ -92,23 +104,28 @@ def animate_gimbaled_system():
     print("Generating frames with static bounds...")
     for i, t in enumerate(time_steps):
         # Drone follows a waypoint for the first part, then circles
-        waypoint = np.array([2500, 2500, -2800]) if t < simulation_duration / 2.5 else None
+        waypoint = np.array([0, 0, -3000])
+        # waypoint = None
         drone.step(dt, waypoint)
         
-        # Target moves linearly across the ground
-        target_pos[0] += 100 * dt
-        target_pos[1] += 50 * dt
+        # Targets move on their own paths
+        target1_pos[0] += 100 * dt
+        target1_pos[1] += 50 * dt
+        target2_pos[0] -= 50 * dt
+        target2_pos[1] += 100 * dt
         
-        # Update the multi-sensor system
-        multi_sensor.step(target_pos, drone.position, drone.attitude, dt)
+        # Update the multi-sensor system with the dictionary of targets
+        targets_dict = {0: target1_pos, 1: target2_pos}
+        multi_sensor.step(targets_dict, drone.position, drone.attitude, dt)
 
         # --- Plotting ---
         fig = plt.figure(figsize=(12, 12))
         ax = fig.add_subplot(111, projection='3d')
         
-        # Plot Drone and Target
+        # Plot Drone and Targets
         ax.scatter(drone.position[1], drone.position[0], -drone.position[2], c='black', marker='o', s=100, label='Drone')
-        ax.scatter(target_pos[1], target_pos[0], -target_pos[2], c='red', marker='x', s=100, label='Target')
+        ax.scatter(target1_pos[1], target1_pos[0], -target1_pos[2], c='red', marker='x', s=100, label='Target 1')
+        ax.scatter(target2_pos[1], target2_pos[0], -target2_pos[2], c='blue', marker='x', s=100, label='Target 2')
 
         # Plot Drone Attitude
         C_body_to_ned = get_rotation_matrix(*drone.attitude)
@@ -122,7 +139,12 @@ def animate_gimbaled_system():
         # Plot footprints for each sensor
         colors = ['cyan', 'magenta']
         for s_idx, sensor in enumerate(multi_sensor.sensors):
-            intersections = sensor.calculate_footprint(drone.position, drone.attitude, multi_sensor.installation_angles_rad, z_plane)
+            intersections = sensor.calculate_footprint(
+                drone.position,
+                drone.attitude,
+                z_plane=z_plane,
+                platform_install_rad=multi_sensor.installation_angles_rad
+            )
             plot_order = ["bottom_left", "bottom_right", "top_right", "top_left"]
             verts = [intersections[key] for key in plot_order if key in intersections]
             if len(verts) >= 3:

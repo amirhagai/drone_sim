@@ -26,7 +26,8 @@ class AdvancedDrone(BaseDrone):
             if np.linalg.norm(waypoint - self.position) < 0.5: # Waypoint reached
                 self.last_waypoint_reached = True
                 self.circling_center = np.copy(self.position)
-                self.acceleration = np.zeros(3) # Stop
+                self.acceleration = np.zeros(3) # Stop accelerating
+                self.velocity = np.zeros(3)     # Stop moving
             else:
                 self.fly_towards(dt, waypoint)
 
